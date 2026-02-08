@@ -1,0 +1,174 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// =============================================================================
+// AGENTS
+// =============================================================================
+
+model Agent {
+  id            String   @id @default(cuid())
+  name          String   @unique // e.g., "clawdbot", "friday", "pixel"
+  displayName   String   // e.g., "Clawdbot", "Friday", "Pixel"
+  role          String   // e.g., "Coordinator", "Backend Developer"
+  sessionKey    String   @unique // e.g., "agent:main:main"
+  status        String   @default("idle") // "idle" | "active" | "blocked"
+  currentTaskId String?  @unique
+  lastHeartbeat DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  // Relations
+  currentTask        Task?                  @relation("CurrentTask", fields: [currentTaskId], references: [id])
+  createdTasks       Task[]                 @relation("TaskCreator")
+  assignments        TaskAssignment[]
+  messages           Message[]
+  activities         Activity[]
+  documents          Document[]
+  notificationsAsTarget Notification[]       @relation("NotificationTarget")
+  threadSubscriptions ThreadSubscription[]
+
+  @@map("agents")
+}
+
+// =============================================================================
+// TASKS
+// =============================================================================
+
+model Task {
+  id          String   @id @default(cuid())
+  title       String
+  description String?
+  status      String   @default("inbox") // "inbox" | "assigned" | "in_progress" | "review" | "done" | "blocked"
+  priority    String   @default("medium") // "low" | "medium" | "high" | "urgent"
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  // Relations
+  createdBy      Agent              @relation("TaskCreator", fields: [createdById], references: [id])
+  currentAgent   Agent?             @relation("CurrentTask")
+  assignments    TaskAssignment[]
+  messages       Message[]
+  activities     Activity[]
+  documents      Document[]
+  threadSubscriptions ThreadSubscription[]
+
+  @@map("tasks")
+}
+
+// Many-to-many relation between tasks and agents
+model TaskAssignment {
+  id        String   @id @default(cuid())
+  taskId    String
+  agentId   String
+  assignedAt DateTime @default(now())
+
+  task Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, agentId])
+  @@map("task_assignments")
+}
+
+// =============================================================================
+// MESSAGES (Comments/Threads)
+// =============================================================================
+
+model Message {
+  id         String   @id @default(cuid())
+  taskId     String
+  agentId    String
+  content    String
+  mentions   String?  // JSON array of agent IDs
+  createdAt  DateTime @default(now())
+
+  task Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  notifications Notification[]
+
+  @@map("messages")
+}
+
+// =============================================================================
+// ACTIVITIES
+// =============================================================================
+
+model Activity {
+  id        String   @id @default(cuid())
+  type      String   // "task_created" | "task_assigned" | "status_changed" | "message_sent" | "agent_active" | etc.
+  agentId   String
+  taskId    String?
+  message   String
+  metadata  String?  // JSON for additional data
+  createdAt DateTime @default(now())
+
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+  task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+
+  @@map("activities")
+}
+
+// =============================================================================
+// DOCUMENTS
+// =============================================================================
+
+model Document {
+  id        String   @id @default(cuid())
+  title     String
+  content   String   // Markdown content
+  type      String   // "deliverable" | "research" | "protocol" | "note"
+  taskId    String?
+  agentId   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  task Task? @relation(fields: [taskId], references: [id], onDelete: SetNull)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@map("documents")
+}
+
+// =============================================================================
+// NOTIFICATIONS
+// =============================================================================
+
+model Notification {
+  id               String   @id @default(cuid())
+  agentId          String   // The agent being notified
+  messageId        String?
+  content          String
+  delivered        Boolean  @default(false)
+  deliveredAt      DateTime?
+  createdAt        DateTime @default(now())
+
+  agent Agent @relation("NotificationTarget", fields: [agentId], references: [id], onDelete: Cascade)
+  message Message? @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}
+
+// =============================================================================
+// THREAD SUBSCRIPTIONS
+// =============================================================================
+
+model ThreadSubscription {
+  id        String   @id @default(cuid())
+  taskId    String
+  agentId   String
+  createdAt DateTime @default(now())
+
+  task Task  @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  agent Agent @relation(fields: [agentId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, agentId])
+  @@map("thread_subscriptions")
+}

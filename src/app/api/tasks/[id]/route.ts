@@ -1,0 +1,147 @@
+import { NextRequest, NextResponse } from 'next/server';
+import prisma from '@/lib/prisma';
+import { emitEvent } from '@/lib/events';
+
+// GET /api/tasks/[id] - Get a specific task
+export async function GET(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    
+    const task = await prisma.task.findUnique({
+      where: { id },
+      include: {
+        createdBy: true,
+        assignments: {
+          include: {
+            agent: true,
+          },
+        },
+        messages: {
+          include: {
+            agent: true,
+          },
+          orderBy: {
+            createdAt: 'asc',
+          },
+        },
+        documents: true,
+      },
+    });
+
+    if (!task) {
+      return NextResponse.json(
+        { success: false, error: 'Task not found' },
+        { status: 404 }
+      );
+    }
+
+    return NextResponse.json({ success: true, data: task });
+  } catch (error) {
+    console.error('Error fetching task:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to fetch task' },
+      { status: 500 }
+    );
+  }
+}
+
+// PATCH /api/tasks/[id] - Update a task
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    const body = await request.json();
+    const { title, description, status, priority, assigneeIds } = body;
+
+    const task = await prisma.task.update({
+      where: { id },
+      data: {
+        ...(title !== undefined && { title }),
+        ...(description !== undefined && { description }),
+        ...(status !== undefined && { status }),
+        ...(priority !== undefined && { priority }),
+        updatedAt: new Date(),
+      },
+      include: {
+        createdBy: true,
+        assignments: {
+          include: {
+            agent: true,
+          },
+        },
+      },
+    });
+
+    // Handle assignee updates
+    if (assigneeIds !== undefined) {
+      // Delete existing assignments
+      await prisma.taskAssignment.deleteMany({
+        where: { taskId: id },
+      });
+
+      // Create new assignments
+      if (assigneeIds.length > 0) {
+        await prisma.taskAssignment.createMany({
+          data: assigneeIds.map((agentId: string) => ({
+            taskId: id,
+            agentId,
+          })),
+        });
+      }
+    }
+
+    // Create activity for status change
+    if (status) {
+      await prisma.activity.create({
+        data: {
+          type: 'status_changed',
+          agentId: task.createdById,
+          taskId: id,
+          message: `Task "${task.title}" status changed to ${status}`,
+          metadata: JSON.stringify({ oldStatus: task.status, newStatus: status }),
+        },
+      });
+    }
+
+    // Emit event for real-time updates
+    emitEvent('task_updated', task);
+
+    return NextResponse.json({ success: true, data: task });
+  } catch (error) {
+    console.error('Error updating task:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to update task' },
+      { status: 500 }
+    );
+  }
+}
+
+// DELETE /api/tasks/[id] - Delete a task
+export async function DELETE(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  try {
+    const { id } = await params;
+    
+    const task = await prisma.task.delete({
+      where: { id },
+    });
+
+    // Emit event for real-time updates
+    emitEvent('task_deleted', task);
+
+    return NextResponse.json({ success: true, data: task });
+  } catch (error) {
+    console.error('Error deleting task:', error);
+    return NextResponse.json(
+      { success: false, error: 'Failed to delete task' },
+      { status: 500 }
+    );
+  }
+}
