@@ -9,6 +9,7 @@ const navigation = [
   { name: 'Agents', href: '/agents', icon: '🤖' },
   { name: 'Documents', href: '/documents', icon: '📄' },
   { name: 'Activities', href: '/activities', icon: '📈' },
+  { name: 'Standup', href: '/standup', icon: '📊' },
 ];
 
 export default function Sidebar() {
