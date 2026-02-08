@@ -1,70 +1,62 @@
 'use client';
 
-import { Task, TaskStatus } from '@/types';
+import { Task } from './TaskBoard';
 import TaskCard from './TaskCard';
 
-interface TaskColumnProps {
-  id: TaskStatus;
+interface Column {
+  id: string;
   title: string;
   color: string;
-  tasks: Task[];
-  onTaskClick?: (task: Task) => void;
-  onTaskDrop?: (taskId: string, newStatus: TaskStatus) => void;
-  onDragStart?: (e: React.DragEvent, task: Task) => void;
 }
 
-export default function TaskColumn({ 
-  id, 
-  title, 
-  color, 
-  tasks, 
+interface Props {
+  column: Column;
+  tasks: Task[];
+  onDragOver: (e: React.DragEvent) => void;
+  onDrop: (e: React.DragEvent) => void;
+  onDragStart: (e: React.DragEvent, task: Task) => void;
+  onTaskClick: (task: Task) => void;
+}
+
+export default function TaskColumn({
+  column,
+  tasks,
+  onDragOver,
+  onDrop,
+  onDragStart,
   onTaskClick,
-  onTaskDrop,
-  onDragStart 
-}: TaskColumnProps) {
-  const handleDragOver = (e: React.DragEvent) => {
-    e.preventDefault();
-    e.dataTransfer.dropEffect = 'move';
-  };
-
-  const handleDrop = (e: React.DragEvent) => {
-    e.preventDefault();
-    const taskId = e.dataTransfer.getData('taskId');
-    if (taskId && onTaskDrop) {
-      onTaskDrop(taskId, id);
-    }
-  };
-
+}: Props) {
   return (
-    <div 
-      className="flex-1 min-w-[280px] max-w-[320px] bg-gray-50 rounded-xl p-4"
-      onDragOver={handleDragOver}
-      onDrop={handleDrop}
+    <div
+      className="flex-shrink-0 w-72 bg-gray-100 rounded-lg"
+      onDragOver={onDragOver}
+      onDrop={(e) => onDrop(e)}
     >
       {/* Column Header */}
-      <div className="flex items-center justify-between mb-4">
-        <div className="flex items-center gap-2">
-          <div className={`w-3 h-3 rounded-full ${color}`}></div>
-          <h3 className="font-semibold text-gray-700">{title}</h3>
+      <div className="p-3 border-b border-gray-200">
+        <div className="flex items-center justify-between">
+          <h3 className="font-medium text-gray-700">{column.title}</h3>
+          <span className={`px-2 py-0.5 text-xs font-medium rounded-full ${
+            tasks.length > 0 ? 'bg-gray-200 text-gray-700' : 'bg-gray-100 text-gray-400'
+          }`}>
+            {tasks.length}
+          </span>
         </div>
-        <span className="bg-gray-200 text-gray-600 text-sm px-2 py-0.5 rounded-full font-medium">
-          {tasks.length}
-        </span>
       </div>
 
       {/* Tasks */}
-      <div className="space-y-3 min-h-[200px]">
+      <div className="p-2 space-y-2 min-h-[200px]">
         {tasks.length === 0 ? (
-          <div className="text-center text-gray-400 text-sm py-8 border-2 border-dashed border-gray-200 rounded-lg">
-            No tasks
+          <div className="text-center py-8 text-gray-400 text-sm">
+            Drop tasks here
           </div>
         ) : (
-          tasks.map((task) => (
+          tasks.map(task => (
             <TaskCard
               key={task.id}
               task={task}
-              onClick={() => onTaskClick?.(task)}
               onDragStart={onDragStart}
+              onClick={() => onTaskClick(task)}
             />
           ))
         )}

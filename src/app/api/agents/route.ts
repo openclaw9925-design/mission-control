@@ -1,5 +1,5 @@
+import { prisma } from '@/lib/prisma';
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
 
 // GET /api/agents - List all agents
 export async function GET() {
@@ -7,9 +7,10 @@ export async function GET() {
     const agents = await prisma.agent.findMany({
       include: {
         currentTask: true,
-        assignments: {
-          include: {
-            task: true,
+        _count: {
+          select: {
+            assignments: true,
+            messages: true,
           },
         },
       },
@@ -32,11 +33,11 @@ export async function GET() {
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
-    const { name, displayName, role, sessionKey, status } = body;
+    const { name, displayName, role, sessionKey } = body;
 
     if (!name || !displayName || !role || !sessionKey) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields' },
+        { success: false, error: 'All fields are required' },
         { status: 400 }
       );
     }
@@ -47,7 +48,16 @@ export async function POST(request: NextRequest) {
         displayName,
         role,
         sessionKey,
-        status: status || 'idle',
+        status: 'idle',
+      },
+    });
+
+    // Create activity
+    await prisma.activity.create({
+      data: {
+        type: 'agent_created',
+        agentId: agent.id,
+        message: `Agent ${displayName} created`,
       },
     });
 
@@ -56,39 +66,6 @@ export async function POST(request: NextRequest) {
     console.error('Error creating agent:', error);
     return NextResponse.json(
       { success: false, error: 'Failed to create agent' },
-      { status: 500 }
-    );
-  }
-}
-
-// PATCH /api/agents - Update agent status
-export async function PATCH(request: NextRequest) {
-  try {
-    const body = await request.json();
-    const { id, status, currentTaskId, lastHeartbeat } = body;
-
-    if (!id) {
-      return NextResponse.json(
-        { success: false, error: 'Agent ID is required' },
-        { status: 400 }
-      );
-    }
-
-    const agent = await prisma.agent.update({
-      where: { id },
-      data: {
-        ...(status !== undefined && { status }),
-        ...(currentTaskId !== undefined && { currentTaskId }),
-        ...(lastHeartbeat !== undefined && { lastHeartbeat: new Date(lastHeartbeat) }),
-        updatedAt: new Date(),
-      },
-    });
-
-    return NextResponse.json({ success: true, data: agent });
-  } catch (error) {
-    console.error('Error updating agent:', error);
-    return NextResponse.json(
-      { success: false, error: 'Failed to update agent' },
       { status: 500 }
     );
   }

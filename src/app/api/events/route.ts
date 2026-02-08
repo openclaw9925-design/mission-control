@@ -1,45 +1,43 @@
 import { NextRequest } from 'next/server';
-import { subscribeToEvents, EventPayload } from '@/lib/events';
+import { subscribeToEvents } from '@/lib/events';
 
 export const dynamic = 'force-dynamic';
 
-// GET /api/events - SSE endpoint for real-time updates
+// GET /api/events - Server-Sent Events endpoint for real-time updates
 export async function GET(request: NextRequest) {
   const encoder = new TextEncoder();
   
   const stream = new ReadableStream({
     start(controller) {
       // Send initial connection message
-      const connectMessage = `data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`;
-      controller.enqueue(encoder.encode(connectMessage));
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: 'connected', timestamp: new Date().toISOString() })}\n\n`));
 
       // Subscribe to events
-      const unsubscribe = subscribeToEvents((payload: EventPayload) => {
+      const unsubscribe = subscribeToEvents((payload) => {
         try {
-          const message = `data: ${JSON.stringify(payload)}\n\n`;
-          controller.enqueue(encoder.encode(message));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify(payload)}\n\n`));
         } catch (error) {
-          console.error('Error sending SSE message:', error);
+          console.error('Error sending event:', error);
         }
       });
 
-      // Keep-alive ping every 30 seconds
-      const keepAlive = setInterval(() => {
+      // Keep connection alive with heartbeat
+      const heartbeatInterval = setInterval(() => {
         try {
-          const ping = `data: ${JSON.stringify({ type: 'ping', timestamp: new Date().toISOString() })}\n\n`;
-          controller.enqueue(encoder.encode(ping));
-        } catch (error) {
-          clearInterval(keepAlive);
+          controller.enqueue(encoder.encode(`: heartbeat\n\n`));
+        } catch {
+          clearInterval(heartbeatInterval);
+          unsubscribe();
         }
       }, 30000);
 
-      // Cleanup on close
+      // Cleanup on disconnect
       request.signal.addEventListener('abort', () => {
-        clearInterval(keepAlive);
+        clearInterval(heartbeatInterval);
         unsubscribe();
         try {
           controller.close();
-        } catch (error) {
+        } catch {
           // Stream already closed
         }
       });

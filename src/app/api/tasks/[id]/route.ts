@@ -1,15 +1,14 @@
+import { prisma } from '@/lib/prisma';
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { emitEvent } from '@/lib/events';
 
-// GET /api/tasks/[id] - Get a specific task
+// GET /api/tasks/[id] - Get a single task
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id } = await params;
-    
+
     const task = await prisma.task.findUnique({
       where: { id },
       include: {
@@ -19,6 +18,7 @@ export async function GET(
             agent: true,
           },
         },
+        currentAgent: true,
         messages: {
           include: {
             agent: true,
@@ -27,7 +27,20 @@ export async function GET(
             createdAt: 'asc',
           },
         },
-        documents: true,
+        documents: {
+          include: {
+            agent: true,
+          },
+        },
+        activities: {
+          include: {
+            agent: true,
+          },
+          orderBy: {
+            createdAt: 'desc',
+          },
+          take: 20,
+        },
       },
     });
 
@@ -56,8 +69,22 @@ export async function PATCH(
   try {
     const { id } = await params;
     const body = await request.json();
-    const { title, description, status, priority, assigneeIds } = body;
+    const { title, description, status, priority, assigneeIds, currentAgentId } = body;
 
+    // Get current task for comparison
+    const currentTask = await prisma.task.findUnique({
+      where: { id },
+      include: { assignments: true },
+    });
+
+    if (!currentTask) {
+      return NextResponse.json(
+        { success: false, error: 'Task not found' },
+        { status: 404 }
+      );
+    }
+
+    // Update task
     const task = await prisma.task.update({
       where: { id },
       data: {
@@ -65,7 +92,7 @@ export async function PATCH(
         ...(description !== undefined && { description }),
         ...(status !== undefined && { status }),
         ...(priority !== undefined && { priority }),
-        updatedAt: new Date(),
+        ...(currentAgentId !== undefined && { currentTaskId: currentAgentId }),
       },
       include: {
         createdBy: true,
@@ -74,6 +101,7 @@ export async function PATCH(
             agent: true,
           },
         },
+        currentAgent: true,
       },
     });
 
@@ -93,22 +121,35 @@ export async function PATCH(
           })),
         });
       }
+
+      // Create activities for new assignees
+      for (const agentId of assigneeIds) {
+        await prisma.activity.create({
+          data: {
+            type: 'task_assigned',
+            agentId,
+            taskId: id,
+            message: `Assigned to task: ${task.title}`,
+          },
+        });
+      }
     }
 
     // Create activity for status change
-    if (status) {
+    if (status && status !== currentTask.status) {
       await prisma.activity.create({
         data: {
           type: 'status_changed',
-          agentId: task.createdById,
+          agentId: currentTask.createdById,
           taskId: id,
-          message: `Task "${task.title}" status changed to ${status}`,
-          metadata: JSON.stringify({ oldStatus: task.status, newStatus: status }),
+          message: `Status changed from ${currentTask.status} to ${status}`,
+          metadata: JSON.stringify({ from: currentTask.status, to: status }),
         },
       });
     }
 
     // Emit event for real-time updates
+    const { emitEvent } = await import('@/lib/events');
     emitEvent('task_updated', task);
 
     return NextResponse.json({ success: true, data: task });
@@ -128,12 +169,13 @@ export async function DELETE(
 ) {
   try {
     const { id } = await params;
-    
+
     const task = await prisma.task.delete({
       where: { id },
     });
 
     // Emit event for real-time updates
+    const { emitEvent } = await import('@/lib/events');
     emitEvent('task_deleted', task);
 
     return NextResponse.json({ success: true, data: task });

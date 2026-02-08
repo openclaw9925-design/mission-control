@@ -1,149 +1,238 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { Task, TaskStatus } from '@/types';
+import { useState, useEffect, useCallback } from 'react';
 import TaskColumn from './TaskColumn';
-import Button from '@/components/ui/Button';
-import Modal from '@/components/ui/Modal';
+import TaskModal from './TaskModal';
 
-interface TaskBoardProps {
-  tasks: Task[];
-  onTaskClick?: (task: Task) => void;
-  onTaskStatusChange?: (taskId: string, newStatus: TaskStatus) => void;
-  onCreateTask?: (task: { title: string; description: string; priority: string }) => void;
+export interface Task {
+  id: string;
+  title: string;
+  description: string | null;
+  status: string;
+  priority: string;
+  createdAt: string;
+  updatedAt: string;
+  createdBy: {
+    id: string;
+    name: string;
+    displayName: string;
+    role: string;
+  };
+  assignments: Array<{
+    agent: {
+      id: string;
+      name: string;
+      displayName: string;
+      role: string;
+    };
+  }>;
+  currentAgent?: {
+    id: string;
+    name: string;
+    displayName: string;
+  } | null;
+  _count?: {
+    messages: number;
+    documents: number;
+  };
 }
 
-const columns: { id: TaskStatus; title: string; color: string }[] = [
-  { id: 'inbox', title: 'Inbox', color: 'bg-gray-400' },
-  { id: 'assigned', title: 'Assigned', color: 'bg-blue-400' },
-  { id: 'in_progress', title: 'In Progress', color: 'bg-yellow-400' },
-  { id: 'review', title: 'Review', color: 'bg-purple-400' },
-  { id: 'done', title: 'Done', color: 'bg-green-400' },
-  { id: 'blocked', title: 'Blocked', color: 'bg-red-400' },
+export interface Agent {
+  id: string;
+  name: string;
+  displayName: string;
+  role: string;
+  status: string;
+}
+
+const columns = [
+  { id: 'inbox', title: '📥 Inbox', color: 'bg-gray-500' },
+  { id: 'assigned', title: '👤 Assigned', color: 'bg-blue-500' },
+  { id: 'in_progress', title: '🔄 In Progress', color: 'bg-yellow-500' },
+  { id: 'review', title: '👀 Review', color: 'bg-purple-500' },
+  { id: 'done', title: '✅ Done', color: 'bg-green-500' },
+  { id: 'blocked', title: '🚫 Blocked', color: 'bg-red-500' },
 ];
 
-export default function TaskBoard({ 
-  tasks, 
-  onTaskClick, 
-  onTaskStatusChange,
-  onCreateTask 
-}: TaskBoardProps) {
-  const [isModalOpen, setIsModalOpen] = useState(false);
-  const [newTask, setNewTask] = useState({ title: '', description: '', priority: 'medium' });
+export default function TaskBoard() {
+  const [tasks, setTasks] = useState<Task[]>([]);
+  const [agents, setAgents] = useState<Agent[]>([]);
+  const [loading, setLoading] = useState(true);
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
+  const [showModal, setShowModal] = useState(false);
+  const [selectedTask, setSelectedTask] = useState<Task | null>(null);
 
-  const handleDragStart = useCallback((e: React.DragEvent, task: Task) => {
-    e.dataTransfer.setData('taskId', task.id);
-    setDraggedTask(task);
+  // Fetch tasks and agents
+  const fetchData = useCallback(async () => {
+    try {
+      const [tasksRes, agentsRes] = await Promise.all([
+        fetch('/api/tasks'),
+        fetch('/api/agents'),
+      ]);
+      
+      const tasksData = await tasksRes.json();
+      const agentsData = await agentsRes.json();
+      
+      if (tasksData.success) {
+        setTasks(tasksData.data);
+      }
+      if (agentsData.success) {
+        setAgents(agentsData.data);
+      }
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
+    }
   }, []);
 
-  const handleTaskDrop = useCallback((taskId: string, newStatus: TaskStatus) => {
-    if (onTaskStatusChange) {
-      onTaskStatusChange(taskId, newStatus);
+  useEffect(() => {
+    fetchData();
+  }, [fetchData]);
+
+  // Set up SSE for real-time updates
+  useEffect(() => {
+    const eventSource = new EventSource('/api/events');
+    
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'task_created' || data.type === 'task_updated') {
+        fetchData();
+      } else if (data.type === 'task_deleted') {
+        setTasks(prev => prev.filter(t => t.id !== data.data.id));
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, [fetchData]);
+
+  // Drag handlers
+  const handleDragStart = (e: React.DragEvent, task: Task) => {
+    setDraggedTask(task);
+    e.dataTransfer.effectAllowed = 'move';
+  };
+
+  const handleDragOver = (e: React.DragEvent) => {
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+  };
+
+  const handleDrop = async (e: React.DragEvent, newStatus: string) => {
+    e.preventDefault();
+    
+    if (!draggedTask || draggedTask.status === newStatus) {
+      setDraggedTask(null);
+      return;
     }
+
+    // Optimistic update
+    setTasks(prev =>
+      prev.map(t =>
+        t.id === draggedTask.id ? { ...t, status: newStatus } : t
+      )
+    );
+
+    // Update on server
+    try {
+      await fetch(`/api/tasks/${draggedTask.id}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ status: newStatus }),
+      });
+    } catch (error) {
+      console.error('Error updating task:', error);
+      fetchData(); // Revert on error
+    }
+
     setDraggedTask(null);
-  }, [onTaskStatusChange]);
+  };
+
+  // Task actions
+  const handleTaskClick = (task: Task) => {
+    setSelectedTask(task);
+    setShowModal(true);
+  };
 
   const handleCreateTask = () => {
-    if (newTask.title.trim() && onCreateTask) {
-      onCreateTask(newTask);
-      setNewTask({ title: '', description: '', priority: 'medium' });
-      setIsModalOpen(false);
+    setSelectedTask(null);
+    setShowModal(true);
+  };
+
+  const handleTaskSaved = () => {
+    setShowModal(false);
+    setSelectedTask(null);
+    fetchData();
+  };
+
+  const handleDeleteTask = async (taskId: string) => {
+    try {
+      await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
+      setShowModal(false);
+      setSelectedTask(null);
+      fetchData();
+    } catch (error) {
+      console.error('Error deleting task:', error);
     }
   };
 
-  const getTasksByStatus = (status: TaskStatus) => {
-    return tasks.filter(task => task.status === status);
-  };
+  // Group tasks by status
+  const tasksByStatus = columns.reduce((acc, col) => {
+    acc[col.id] = tasks.filter(t => t.status === col.id);
+    return acc;
+  }, {} as Record<string, Task[]>);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500">Loading tasks...</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="h-full flex flex-col">
+    <div className="h-full">
       {/* Header */}
       <div className="flex items-center justify-between mb-6">
         <div>
-          <h2 className="text-xl font-bold text-gray-800">Task Board</h2>
-          <p className="text-sm text-gray-500">{tasks.length} total tasks</p>
+          <h1 className="text-2xl font-bold text-gray-800">Task Board</h1>
+          <p className="text-gray-500">{tasks.length} tasks total</p>
         </div>
-        <Button onClick={() => setIsModalOpen(true)}>
-          + New Task
-        </Button>
+        <button
+          onClick={handleCreateTask}
+          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+        >
+          <span>+</span>
+          New Task
+        </button>
       </div>
 
       {/* Kanban Board */}
-      <div className="flex gap-4 overflow-x-auto pb-4 flex-1">
-        {columns.map((column) => (
+      <div className="flex gap-4 overflow-x-auto pb-4" style={{ minWidth: '100%' }}>
+        {columns.map(column => (
           <TaskColumn
             key={column.id}
-            id={column.id}
-            title={column.title}
-            color={column.color}
-            tasks={getTasksByStatus(column.id)}
-            onTaskClick={onTaskClick}
-            onTaskDrop={handleTaskDrop}
+            column={column}
+            tasks={tasksByStatus[column.id] || []}
+            onDragOver={handleDragOver}
+            onDrop={(e) => handleDrop(e, column.id)}
             onDragStart={handleDragStart}
+            onTaskClick={handleTaskClick}
           />
         ))}
       </div>
 
-      {/* Create Task Modal */}
-      <Modal
-        isOpen={isModalOpen}
-        onClose={() => setIsModalOpen(false)}
-        title="Create New Task"
-        size="lg"
-      >
-        <div className="space-y-4">
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Title
-            </label>
-            <input
-              type="text"
-              value={newTask.title}
-              onChange={(e) => setNewTask({ ...newTask, title: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              placeholder="Task title..."
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Description
-            </label>
-            <textarea
-              value={newTask.description}
-              onChange={(e) => setNewTask({ ...newTask, description: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 min-h-[100px]"
-              placeholder="Task description..."
-            />
-          </div>
-
-          <div>
-            <label className="block text-sm font-medium text-gray-700 mb-1">
-              Priority
-            </label>
-            <select
-              value={newTask.priority}
-              onChange={(e) => setNewTask({ ...newTask, priority: e.target.value })}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="low">Low</option>
-              <option value="medium">Medium</option>
-              <option value="high">High</option>
-              <option value="urgent">Urgent</option>
-            </select>
-          </div>
-
-          <div className="flex justify-end gap-3 pt-4 border-t border-gray-200">
-            <Button variant="secondary" onClick={() => setIsModalOpen(false)}>
-              Cancel
-            </Button>
-            <Button onClick={handleCreateTask} disabled={!newTask.title.trim()}>
-              Create Task
-            </Button>
-          </div>
-        </div>
-      </Modal>
+      {/* Task Modal */}
+      {showModal && (
+        <TaskModal
+          task={selectedTask}
+          agents={agents}
+          onClose={() => setShowModal(false)}
+          onSave={handleTaskSaved}
+          onDelete={selectedTask ? () => handleDeleteTask(selectedTask.id) : undefined}
+        />
+      )}
     </div>
   );
 }

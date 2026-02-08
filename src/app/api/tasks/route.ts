@@ -1,24 +1,41 @@
+import { prisma } from '@/lib/prisma';
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { emitEvent } from '@/lib/events';
 
 // GET /api/tasks - List all tasks
 export async function GET(request: NextRequest) {
   try {
     const { searchParams } = new URL(request.url);
     const status = searchParams.get('status');
-    const priority = searchParams.get('priority');
+    const assignee = searchParams.get('assignee');
+
+    const where: Record<string, unknown> = {};
+    
+    if (status) {
+      where.status = status;
+    }
+    
+    if (assignee) {
+      where.assignments = {
+        some: {
+          agentId: assignee,
+        },
+      };
+    }
 
     const tasks = await prisma.task.findMany({
-      where: {
-        ...(status && { status }),
-        ...(priority && { priority }),
-      },
+      where,
       include: {
         createdBy: true,
         assignments: {
           include: {
             agent: true,
+          },
+        },
+        currentAgent: true,
+        _count: {
+          select: {
+            messages: true,
+            documents: true,
           },
         },
       },
@@ -43,36 +60,30 @@ export async function POST(request: NextRequest) {
     const body = await request.json();
     const { title, description, priority, createdById, assigneeIds } = body;
 
-    // Get coordinator agent if no creator specified
-    let creatorId = createdById;
-    if (!creatorId) {
-      const coordinator = await prisma.agent.findFirst({
-        where: { name: 'clawdbot' },
-      });
-      creatorId = coordinator?.id;
-    }
-
-    if (!creatorId) {
+    if (!title || !createdById) {
       return NextResponse.json(
-        { success: false, error: 'No creator specified and no coordinator found' },
+        { success: false, error: 'Title and createdById are required' },
         { status: 400 }
       );
     }
 
+    // Create task
     const task = await prisma.task.create({
       data: {
         title,
-        description: description || null,
+        description,
         priority: priority || 'medium',
         status: 'inbox',
-        createdById: creatorId,
-        ...(assigneeIds && assigneeIds.length > 0 && {
-          assignments: {
-            create: assigneeIds.map((agentId: string) => ({
-              agentId,
-            })),
-          },
-        }),
+        createdById,
+        ...(assigneeIds && assigneeIds.length > 0
+          ? {
+              assignments: {
+                create: assigneeIds.map((agentId: string) => ({
+                  agentId,
+                })),
+              },
+            }
+          : {}),
       },
       include: {
         createdBy: true,
@@ -88,13 +99,14 @@ export async function POST(request: NextRequest) {
     await prisma.activity.create({
       data: {
         type: 'task_created',
-        agentId: creatorId,
+        agentId: createdById,
         taskId: task.id,
-        message: `Task "${title}" created`,
+        message: `Created task: ${title}`,
       },
     });
 
     // Emit event for real-time updates
+    const { emitEvent } = await import('@/lib/events');
     emitEvent('task_created', task);
 
     return NextResponse.json({ success: true, data: task });
