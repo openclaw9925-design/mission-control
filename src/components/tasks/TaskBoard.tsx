@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import TaskColumn from './TaskColumn';
 import TaskModal from './TaskModal';
+import TaskDetail from './TaskDetail';
 
 export interface Task {
   id: string;
@@ -61,6 +62,7 @@ export default function TaskBoard() {
   const [draggedTask, setDraggedTask] = useState<Task | null>(null);
   const [showModal, setShowModal] = useState(false);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [detailTaskId, setDetailTaskId] = useState<string | null>(null);
 
   // Fetch tasks and agents
   const fetchData = useCallback(async () => {
@@ -96,17 +98,20 @@ export default function TaskBoard() {
     
     eventSource.onmessage = (event) => {
       const data = JSON.parse(event.data);
-      if (data.type === 'task_created' || data.type === 'task_updated') {
+      if (data.type === 'task_created' || data.type === 'task_updated' || data.type === 'message_sent') {
         fetchData();
       } else if (data.type === 'task_deleted') {
         setTasks(prev => prev.filter(t => t.id !== data.data.id));
+        if (detailTaskId === data.data.id) {
+          setDetailTaskId(null);
+        }
       }
     };
 
     return () => {
       eventSource.close();
     };
-  }, [fetchData]);
+  }, [fetchData, detailTaskId]);
 
   // Drag handlers
   const handleDragStart = (e: React.DragEvent, task: Task) => {
@@ -151,12 +156,17 @@ export default function TaskBoard() {
 
   // Task actions
   const handleTaskClick = (task: Task) => {
-    setSelectedTask(task);
-    setShowModal(true);
+    setDetailTaskId(task.id);
   };
 
   const handleCreateTask = () => {
     setSelectedTask(null);
+    setShowModal(true);
+  };
+
+  const handleEditTask = (task: Task) => {
+    setDetailTaskId(null);
+    setSelectedTask(task);
     setShowModal(true);
   };
 
@@ -171,6 +181,7 @@ export default function TaskBoard() {
       await fetch(`/api/tasks/${taskId}`, { method: 'DELETE' });
       setShowModal(false);
       setSelectedTask(null);
+      setDetailTaskId(null);
       fetchData();
     } catch (error) {
       console.error('Error deleting task:', error);
@@ -192,38 +203,54 @@ export default function TaskBoard() {
   }
 
   return (
-    <div className="h-full">
-      {/* Header */}
-      <div className="flex items-center justify-between mb-6">
-        <div>
-          <h1 className="text-2xl font-bold text-gray-800">Task Board</h1>
-          <p className="text-gray-500">{tasks.length} tasks total</p>
+    <div className="h-full flex">
+      {/* Main Board */}
+      <div className={`flex-1 flex flex-col transition-all ${detailTaskId ? 'pr-0' : ''}`}>
+        {/* Header */}
+        <div className="flex items-center justify-between mb-6">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-800">Task Board</h1>
+            <p className="text-gray-500">{tasks.length} tasks total</p>
+          </div>
+          <button
+            onClick={handleCreateTask}
+            className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
+          >
+            <span>+</span>
+            New Task
+          </button>
         </div>
-        <button
-          onClick={handleCreateTask}
-          className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors flex items-center gap-2"
-        >
-          <span>+</span>
-          New Task
-        </button>
+
+        {/* Kanban Board */}
+        <div className="flex gap-4 overflow-x-auto pb-4 flex-1" style={{ minWidth: '100%' }}>
+          {columns.map(column => (
+            <TaskColumn
+              key={column.id}
+              column={column}
+              tasks={tasksByStatus[column.id] || []}
+              onDragOver={handleDragOver}
+              onDrop={(e) => handleDrop(e, column.id)}
+              onDragStart={handleDragStart}
+              onTaskClick={handleTaskClick}
+              selectedTaskId={detailTaskId}
+            />
+          ))}
+        </div>
       </div>
 
-      {/* Kanban Board */}
-      <div className="flex gap-4 overflow-x-auto pb-4" style={{ minWidth: '100%' }}>
-        {columns.map(column => (
-          <TaskColumn
-            key={column.id}
-            column={column}
-            tasks={tasksByStatus[column.id] || []}
-            onDragOver={handleDragOver}
-            onDrop={(e) => handleDrop(e, column.id)}
-            onDragStart={handleDragStart}
-            onTaskClick={handleTaskClick}
+      {/* Detail Panel */}
+      {detailTaskId && (
+        <div className="w-96 border-l border-gray-200 bg-white p-4 overflow-y-auto shadow-lg">
+          <TaskDetail
+            taskId={detailTaskId}
+            agents={agents}
+            onClose={() => setDetailTaskId(null)}
+            onTaskUpdated={fetchData}
           />
-        ))}
-      </div>
+        </div>
+      )}
 
-      {/* Task Modal */}
+      {/* Task Modal (for create/edit) */}
       {showModal && (
         <TaskModal
           task={selectedTask}

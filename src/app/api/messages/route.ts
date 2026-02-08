@@ -1,6 +1,5 @@
+import { prisma } from '@/lib/prisma';
 import { NextRequest, NextResponse } from 'next/server';
-import prisma from '@/lib/prisma';
-import { emitEvent } from '@/lib/events';
 
 // GET /api/messages - List messages for a task
 export async function GET(request: NextRequest) {
@@ -18,7 +17,14 @@ export async function GET(request: NextRequest) {
     const messages = await prisma.message.findMany({
       where: { taskId },
       include: {
-        agent: true,
+        agent: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            role: true,
+          },
+        },
       },
       orderBy: {
         createdAt: 'asc',
@@ -35,7 +41,7 @@ export async function GET(request: NextRequest) {
   }
 }
 
-// POST /api/messages - Create a new message
+// POST /api/messages - Create a message
 export async function POST(request: NextRequest) {
   try {
     const body = await request.json();
@@ -43,7 +49,7 @@ export async function POST(request: NextRequest) {
 
     if (!taskId || !agentId || !content) {
       return NextResponse.json(
-        { success: false, error: 'Missing required fields' },
+        { success: false, error: 'taskId, agentId, and content are required' },
         { status: 400 }
       );
     }
@@ -56,7 +62,14 @@ export async function POST(request: NextRequest) {
         mentions: mentions ? JSON.stringify(mentions) : null,
       },
       include: {
-        agent: true,
+        agent: {
+          select: {
+            id: true,
+            name: true,
+            displayName: true,
+            role: true,
+          },
+        },
       },
     });
 
@@ -66,24 +79,11 @@ export async function POST(request: NextRequest) {
         type: 'message_sent',
         agentId,
         taskId,
-        message: `New message on task`,
+        message: `Commented on task`,
       },
     });
 
-    // Create notifications for mentions
-    if (mentions && Array.isArray(mentions)) {
-      for (const mentionedAgentId of mentions) {
-        await prisma.notification.create({
-          data: {
-            agentId: mentionedAgentId,
-            messageId: message.id,
-            content: `You were mentioned in a comment`,
-          },
-        });
-      }
-    }
-
-    // Subscribe agent to thread
+    // Subscribe author to thread
     await prisma.threadSubscription.upsert({
       where: {
         taskId_agentId: {
@@ -91,14 +91,46 @@ export async function POST(request: NextRequest) {
           agentId,
         },
       },
+      update: {},
       create: {
         taskId,
         agentId,
       },
-      update: {},
     });
 
+    // Create notifications for mentions
+    if (mentions && Array.isArray(mentions)) {
+      for (const mentionedAgentId of mentions) {
+        if (mentionedAgentId !== agentId) {
+          await prisma.notification.create({
+            data: {
+              agentId: mentionedAgentId,
+              messageId: message.id,
+              content: `You were mentioned in a comment`,
+              delivered: false,
+            },
+          });
+
+          // Subscribe mentioned agent to thread
+          await prisma.threadSubscription.upsert({
+            where: {
+              taskId_agentId: {
+                taskId,
+                agentId: mentionedAgentId,
+              },
+            },
+            update: {},
+            create: {
+              taskId,
+              agentId: mentionedAgentId,
+            },
+          });
+        }
+      }
+    }
+
     // Emit event for real-time updates
+    const { emitEvent } = await import('@/lib/events');
     emitEvent('message_sent', message);
 
     return NextResponse.json({ success: true, data: message });

@@ -16,6 +16,7 @@ interface Props {
   onDrop: (e: React.DragEvent) => void;
   onDragStart: (e: React.DragEvent, task: Task) => void;
   onTaskClick: (task: Task) => void;
+  selectedTaskId?: string | null;
 }
 
 export default function TaskColumn({
@@ -25,6 +26,7 @@ export default function TaskColumn({
   onDrop,
   onDragStart,
   onTaskClick,
+  selectedTaskId,
 }: Props) {
   return (
     <div
@@ -57,6 +59,7 @@ export default function TaskColumn({
               task={task}
               onDragStart={onDragStart}
               onClick={() => onTaskClick(task)}
+              isSelected={selectedTaskId === task.id}
             />
           ))
         )}

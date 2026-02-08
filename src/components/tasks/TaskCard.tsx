@@ -6,6 +6,7 @@ interface Props {
   task: Task;
   onDragStart: (e: React.DragEvent, task: Task) => void;
   onClick: () => void;
+  isSelected?: boolean;
 }
 
 const priorityColors: Record<string, string> = {
@@ -21,7 +22,7 @@ const agentEmojis: Record<string, string> = {
   pixel: '🎨',
 };
 
-export default function TaskCard({ task, onDragStart, onClick }: Props) {
+export default function TaskCard({ task, onDragStart, onClick, isSelected }: Props) {
   const agentEmoji = task.currentAgent
     ? agentEmojis[task.currentAgent.name] || '👤'
     : task.assignments[0]
@@ -33,7 +34,11 @@ export default function TaskCard({ task, onDragStart, onClick }: Props) {
       draggable
       onDragStart={(e) => onDragStart(e, task)}
       onClick={onClick}
-      className="bg-white p-3 rounded-lg shadow-sm border border-gray-200 cursor-pointer hover:shadow-md hover:border-blue-300 transition-all group"
+      className={`bg-white p-3 rounded-lg shadow-sm border cursor-pointer hover:shadow-md transition-all group ${
+        isSelected 
+          ? 'border-blue-500 ring-2 ring-blue-200 shadow-md' 
+          : 'border-gray-200 hover:border-blue-300'
+      }`}
     >
       {/* Priority Badge */}
       <div className="flex items-center justify-between mb-2">
