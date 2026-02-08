@@ -57,10 +57,13 @@ export default function Sidebar() {
         <div className="text-xs text-slate-400 uppercase tracking-wider mb-2">
           Agents Online
         </div>
-        <div className="flex gap-2">
-          <span className="text-2xl" title="clawdbot (Coordinator)">🤖</span>
+        <div className="flex gap-2 flex-wrap">
+          <span className="text-2xl" title="Clawdbot (Coordinator)">🤖</span>
           <span className="text-2xl" title="Friday (Backend)">⚙️</span>
           <span className="text-2xl" title="Pixel (Frontend)">🎨</span>
+          <span className="text-2xl" title="Fury (Research)">🔍</span>
+          <span className="text-2xl" title="Scout (Opportunities)">🔭</span>
+          <span className="text-2xl" title="Automaton (Automation)">🔧</span>
         </div>
       </div>
     </aside>
