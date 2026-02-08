@@ -1,86 +1,161 @@
 'use client';
 
-import { Activity, ActivityType } from '@/types';
+import { useState, useEffect } from 'react';
 
-interface ActivityFeedProps {
-  activities: Activity[];
-  limit?: number;
+interface Activity {
+  id: string;
+  type: string;
+  message: string;
+  metadata: string | null;
+  createdAt: string;
+  agent: {
+    id: string;
+    name: string;
+    displayName: string;
+    role: string;
+  };
+  task: {
+    id: string;
+    title: string;
+    status: string;
+  } | null;
 }
 
-const activityIcons: Record<ActivityType, string> = {
+const activityIcons: Record<string, string> = {
   task_created: '📋',
   task_assigned: '👤',
   status_changed: '🔄',
   message_sent: '💬',
   agent_active: '🤖',
   document_created: '📄',
+  agent_created: '✨',
 };
 
-const activityColors: Record<ActivityType, string> = {
-  task_created: 'bg-blue-100 text-blue-800',
-  task_assigned: 'bg-purple-100 text-purple-800',
-  status_changed: 'bg-yellow-100 text-yellow-800',
-  message_sent: 'bg-green-100 text-green-800',
-  agent_active: 'bg-indigo-100 text-indigo-800',
-  document_created: 'bg-orange-100 text-orange-800',
+const activityColors: Record<string, string> = {
+  task_created: 'bg-blue-50 border-blue-200',
+  task_assigned: 'bg-purple-50 border-purple-200',
+  status_changed: 'bg-yellow-50 border-yellow-200',
+  message_sent: 'bg-green-50 border-green-200',
+  agent_active: 'bg-indigo-50 border-indigo-200',
+  document_created: 'bg-orange-50 border-orange-200',
+  agent_created: 'bg-pink-50 border-pink-200',
 };
 
-function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diff = now.getTime() - new Date(date).getTime();
-  const minutes = Math.floor(diff / 60000);
-  const hours = Math.floor(minutes / 60);
-  const days = Math.floor(hours / 24);
+const agentEmojis: Record<string, string> = {
+  clawdbot: '🤖',
+  friday: '⚙️',
+  pixel: '🎨',
+};
 
-  if (minutes < 1) return 'Just now';
-  if (minutes < 60) return `${minutes}m ago`;
-  if (hours < 24) return `${hours}h ago`;
-  if (days < 7) return `${days}d ago`;
-  return new Date(date).toLocaleDateString();
-}
+export default function ActivityFeed() {
+  const [activities, setActivities] = useState<Activity[]>([]);
+  const [loading, setLoading] = useState(true);
 
-export default function ActivityFeed({ activities, limit = 20 }: ActivityFeedProps) {
-  const displayedActivities = activities.slice(0, limit);
+  useEffect(() => {
+    fetchActivities();
+
+    // Subscribe to SSE for real-time updates
+    const eventSource = new EventSource('/api/events');
+    
+    eventSource.onmessage = (event) => {
+      const data = JSON.parse(event.data);
+      if (data.type === 'activity_created') {
+        setActivities(prev => [data.data, ...prev].slice(0, 50));
+      } else if (data.type === 'task_created' || data.type === 'task_updated') {
+        fetchActivities();
+      }
+    };
+
+    return () => {
+      eventSource.close();
+    };
+  }, []);
+
+  const fetchActivities = async () => {
+    try {
+      const response = await fetch('/api/activities?limit=30');
+      const data = await response.json();
+      if (data.success) {
+        setActivities(data.data);
+      }
+    } catch (error) {
+      console.error('Error fetching activities:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const formatTime = (dateString: string) => {
+    const date = new Date(dateString);
+    const now = new Date();
+    const diff = now.getTime() - date.getTime();
+    const minutes = Math.floor(diff / 60000);
+    const hours = Math.floor(diff / 3600000);
+    const days = Math.floor(diff / 86400000);
+
+    if (minutes < 1) return 'Just now';
+    if (minutes < 60) return `${minutes}m ago`;
+    if (hours < 24) return `${hours}h ago`;
+    if (days < 7) return `${days}d ago`;
+    return date.toLocaleDateString();
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-gray-500">Loading activities...</div>
+      </div>
+    );
+  }
 
   return (
-    <div className="bg-white border border-gray-200 rounded-xl overflow-hidden">
-      <div className="px-4 py-3 border-b border-gray-200 bg-gray-50">
-        <h3 className="font-semibold text-gray-800 flex items-center gap-2">
-          <span>📈</span> Activity Feed
-        </h3>
-      </div>
-      
-      <div className="divide-y divide-gray-100 max-h-[500px] overflow-y-auto">
-        {displayedActivities.length === 0 ? (
-          <div className="p-8 text-center text-gray-400">
-            No recent activity
-          </div>
-        ) : (
-          displayedActivities.map((activity) => (
-            <div key={activity.id} className="p-4 hover:bg-gray-50 transition-colors">
-              <div className="flex items-start gap-3">
-                <div className={`w-8 h-8 rounded-full flex items-center justify-center text-sm ${activityColors[activity.type]}`}>
-                  {activityIcons[activity.type]}
+    <div className="space-y-3">
+      {activities.length === 0 ? (
+        <div className="text-center py-12 text-gray-500">
+          <div className="text-4xl mb-2">📭</div>
+          <p>No activities yet</p>
+          <p className="text-sm">Activities will appear here as agents work on tasks</p>
+        </div>
+      ) : (
+        activities.map((activity) => (
+          <div
+            key={activity.id}
+            className={`p-4 rounded-lg border ${activityColors[activity.type] || 'bg-gray-50 border-gray-200'}`}
+          >
+            <div className="flex items-start gap-3">
+              {/* Icon */}
+              <span className="text-2xl">
+                {activityIcons[activity.type] || '📌'}
+              </span>
+
+              {/* Content */}
+              <div className="flex-1 min-w-0">
+                <div className="flex items-center gap-2 mb-1">
+                  <span className="text-lg">
+                    {agentEmojis[activity.agent.name] || '👤'}
+                  </span>
+                  <span className="font-medium text-gray-800">
+                    {activity.agent.displayName}
+                  </span>
+                  <span className="text-gray-400">•</span>
+                  <span className="text-sm text-gray-500">
+                    {formatTime(activity.createdAt)}
+                  </span>
                 </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm text-gray-700">
-                    {activity.message}
-                  </p>
-                  <div className="flex items-center gap-2 mt-1 text-xs text-gray-400">
-                    <span>{formatRelativeTime(activity.createdAt)}</span>
-                    {activity.agentId && (
-                      <>
-                        <span>•</span>
-                        <span>Agent: {activity.agentId}</span>
-                      </>
-                    )}
-                  </div>
-                </div>
+                <p className="text-gray-700">{activity.message}</p>
+                {activity.task && (
+                  <a
+                    href={`/tasks?highlight=${activity.task.id}`}
+                    className="inline-block mt-2 text-sm text-blue-600 hover:underline"
+                  >
+                    📋 {activity.task.title}
+                  </a>
+                )}
               </div>
             </div>
-          ))
-        )}
-      </div>
+          </div>
+        ))
+      )}
     </div>
   );
 }
